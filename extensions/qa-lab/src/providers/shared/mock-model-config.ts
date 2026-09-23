@@ -48,6 +48,7 @@ function createMockOpenAiTextModel(id: string): ModelProviderConfig["models"][nu
     cost: ZERO_COST,
     contextWindow: 128_000,
     maxTokens: 4096,
+    compat: { sendSessionIdHeader: true },
   };
 }
 

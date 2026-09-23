@@ -6,6 +6,7 @@ import {
   expectResponses,
   expectNonStreamingResponsesJson,
   expectOk,
+  fetchOkJson,
   getJson,
   outputToolCall,
   outputToolArgsFromItem,
@@ -209,10 +210,12 @@ describe("mock tool surface dispatch", () => {
         runtimeSessionId: string,
         childSessionKey: string,
         callId: string,
+        identityCarrier: "header" | "prompt",
       ) => {
-        const parent = await expectNonStreamingResponsesJson(server, {
+        const body = {
+          stream: false,
           model: "gpt-5.6-luna",
-          instructions: `Runtime: embedded | agent=qa | session=agent:qa:${runtimeSessionId} | sessionId=${runtimeSessionId}`,
+          instructions: `Runtime: embedded | agent=qa | session=agent:qa:${runtimeSessionId}${identityCarrier === "prompt" ? ` | sessionId=${runtimeSessionId}` : ""}`,
           tools: structured ? STRUCTURED_CATALOG_TOOLS : [SESSIONS_SPAWN_TOOL, SESSIONS_YIELD_TOOL],
           input: [
             makeUserInput("Subagent terminal reply QA check: visible."),
@@ -245,6 +248,14 @@ describe("mock tool surface dispatch", () => {
               ),
             ),
           ],
+        };
+        const parent = await fetchOkJson(`${server.baseUrl}/v1/responses`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(identityCarrier === "header" ? { session_id: runtimeSessionId } : {}),
+          },
+          body: JSON.stringify(body),
         });
         expect(outputText(parent)).toBe("Worker started.");
       };
@@ -283,7 +294,12 @@ describe("mock tool surface dispatch", () => {
         })
         .toBe(2);
 
-      await acknowledgeParent("qa-terminal-parent-2", secondChildSessionKey, "call_spawn_2");
+      await acknowledgeParent(
+        "qa-terminal-parent-2",
+        secondChildSessionKey,
+        "call_spawn_2",
+        "header",
+      );
       expect(secondChildSettled).toBe(false);
       expect(firstChildSettled).toBe(false);
       await settleParent("qa-terminal-parent-2");
@@ -292,7 +308,12 @@ describe("mock tool surface dispatch", () => {
       expect(secondChildSettled).toBe(true);
       expect(firstChildSettled).toBe(false);
 
-      await acknowledgeParent("qa-terminal-parent-1", firstChildSessionKey, "call_spawn_1");
+      await acknowledgeParent(
+        "qa-terminal-parent-1",
+        firstChildSessionKey,
+        "call_spawn_1",
+        "prompt",
+      );
       expect(firstChildSettled).toBe(false);
       await settleParent("qa-terminal-parent-1");
       const firstChild = await (await expectOk(firstChildResponse)).json();

@@ -23,6 +23,7 @@ export type QaMockProviderDispatchRequest = {
   route: "responses" | "anthropic-messages";
   body: Record<string, unknown>;
   raw: string;
+  sessionId?: string;
 };
 
 export type QaMockProviderFailure = {

@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import { format as formatUrl } from "node:url";
+import { asOptionalRecord, readStringValue } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
   closeQaHttpServer,
   dispatchQaHttpRequest,
@@ -331,10 +332,6 @@ const QA_TELEGRAM_VISIBLE_PARTIAL_FAILURE_MARKER = "TELEGRAM-VISIBLE-PARTIAL-BEF
 const QA_REPEATED_REQUEST_RESPONSE_PAUSE_MS = 80_000;
 const QA_REPEATED_REQUEST_STALLED_RESPONSE_PAUSE_MS = 180_000;
 const QA_REPEATED_REQUEST_STALL_ATTEMPT = 5;
-
-function resolveQaRuntimeSessionId(input: ResponsesInputItem[], body: Record<string, unknown>) {
-  return /\bRuntime:\s*[^\n]*\bsessionId=([^\s|]+)/u.exec(extractAllRequestTexts(input, body))?.[1];
-}
 
 function normalizeResponsesInput(value: unknown): ResponsesInputItem[] {
   if (Array.isArray(value)) {
@@ -2101,12 +2098,7 @@ export async function startQaMockOpenAiServer(params?: QaMockOpenAiServerOptions
   const terminalRequesterSettleGate = createTerminalRequesterSettleGate();
   const scenarioStates = new Map<string, MockScenarioState>();
   const servedCompactionSummaryFaultMarkers = new Set<string>();
-  const scenarioStateFor = (body: Record<string, unknown>): MockScenarioState => {
-    const input = normalizeResponsesInput(body.input);
-    const sessionId =
-      resolveQaRuntimeSessionId(input, body) ??
-      (body.client_metadata as { session_id?: unknown } | undefined)?.session_id;
-    const key = typeof sessionId === "string" ? sessionId : "";
+  const scenarioStateFor = (key = ""): MockScenarioState => {
     // Runtime session identity survives provider switches and cache-boundary changes.
     const state = scenarioStates.get(key) ?? {
       anthropicThinkingErrorScenarioKeys: new Set<string>(),
@@ -2160,7 +2152,11 @@ export async function startQaMockOpenAiServer(params?: QaMockOpenAiServerOptions
     const subagentTurn = resolveMockSubagentTurn(input);
     const prompt = extractLastUserText(input);
     const allInputText = extractAllRequestTexts(input, body);
-    const scenarioState = scenarioStateFor(body);
+    const sessionId =
+      request.sessionId ?? /\bRuntime:\s*[^\n]*\bsessionId=([^\s|]+)/u.exec(allInputText)?.[1];
+    const scenarioState = scenarioStateFor(
+      sessionId ?? readStringValue(asOptionalRecord(body.client_metadata)?.session_id),
+    );
     const compactionSummaryFaultMode = resolveCompactionSummaryFaultMode({
       allInputText,
       requestKind,
@@ -2262,23 +2258,22 @@ export async function startQaMockOpenAiServer(params?: QaMockOpenAiServerOptions
     const plannedTool = extractScenarioPlannedTool(events);
     const terminalRequesterCase =
       subagentTurn?.kind === "kickoff" ? subagentTurn.caseName : undefined;
-    const runtime = /\bRuntime:\s*([^\n]+)/u.exec(extractAllRequestTexts(input, body))?.[1];
+    const runtime = /\bRuntime:\s*([^\n]+)/u.exec(allInputText)?.[1];
     const requesterAgentId = runtime && /\bagent=([^\s|]+)/u.exec(runtime)?.[1];
     const requesterSessionKey = runtime && /\bsession=([^\s|]+)/u.exec(runtime)?.[1];
-    const requesterSessionId = resolveQaRuntimeSessionId(input, body);
     const childSessionKey = resolveAcceptedChildSessionKey(input);
     const terminalRequester =
       terminalRequesterCase &&
       requesterAgentId &&
       requesterSessionKey &&
-      requesterSessionId &&
+      sessionId &&
       childSessionKey
         ? {
             caseName: terminalRequesterCase,
             childSessionKey,
             agentId: requesterAgentId,
             sessionKey: requesterSessionKey,
-            sessionId: requesterSessionId,
+            sessionId,
           }
         : undefined;
     const failure =
@@ -2470,7 +2465,11 @@ export async function startQaMockOpenAiServer(params?: QaMockOpenAiServerOptions
         return;
       }
       if (url.pathname === "/v1/responses") {
-        const dispatched = await dispatchResponses({ body, raw });
+        const dispatched = await dispatchResponses({
+          body,
+          raw,
+          sessionId: readStringValue(req.headers.session_id),
+        });
         if (dispatched.failure) {
           if (dispatched.failure.retryAfterSeconds !== undefined) {
             res.setHeader("retry-after", String(dispatched.failure.retryAfterSeconds));
