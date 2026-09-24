@@ -1036,6 +1036,7 @@ struct OnboardingAISetupTests {
         for _ in 0..<400 where model.activeAuthOption != nil {
             try await Task.sleep(nanoseconds: 5_000_000)
         }
+        await activation.value
         await settleQueuedAISetupTasks()
         #expect(model.connected == (decision == "accept"))
         #expect(model.pendingActivationVerification == (decision == "error" || decision == "retry-cancel"))
