@@ -1,9 +1,30 @@
 import type ts from "typescript";
 import { getTypeScript } from "./ts-guard-utils.mts";
 
-/** Source-update completion loads the installed checkout's scripts, not retained dist chunks. */
+/**
+ * Shipped source-only contracts that update completion loads from the installed
+ * package root, keyed by the importing owner and its package-root binding. They
+ * have no hashed compatibility output, so the inventory does not record them.
+ */
+const SOURCE_SCRIPT_CONTRACTS: Record<string, { root: string; scripts: string[] }> = {
+  // Source-update completion loads the installed checkout's scripts, not retained dist chunks.
+  "src/cli/update-cli/update-command-runtime.ts": {
+    root: "root",
+    scripts: [
+      "scripts/stage-bundled-plugin-runtime.mts",
+      "scripts/lib/dist-artifact-ownership.mts",
+    ],
+  },
+  // Node runtime recovery stays a package-root module so its installer assets resolve outside dist.
+  "src/cli/update-cli/update-command-node-runtime-resolution.ts": {
+    root: "driverRoot",
+    scripts: ["node-runtime-recovery.mjs"],
+  },
+};
+
 export function isUpdateSourceScriptImport(owner: string, node: ts.CallExpression): boolean {
-  if (owner !== "src/cli/update-cli/update-command-runtime.ts") {
+  const contract = SOURCE_SCRIPT_CONTRACTS[owner];
+  if (!contract) {
     return false;
   }
   const ts = getTypeScript();
@@ -54,15 +75,11 @@ export function isUpdateSourceScriptImport(owner: string, node: ts.CallExpressio
   if (
     !root ||
     !ts.isIdentifier(root) ||
-    root.text !== "root" ||
+    root.text !== contract.root ||
     !segments.every(ts.isStringLiteral)
   ) {
     return false;
   }
-  // These shipped source-only contracts have no hashed compatibility output.
   // Keep every other nonliteral import fail-closed, including paths under dist.
-  return [
-    "scripts/stage-bundled-plugin-runtime.mts",
-    "scripts/lib/dist-artifact-ownership.mts",
-  ].includes(segments.map((segment) => segment.text).join("/"));
+  return contract.scripts.includes(segments.map((segment) => segment.text).join("/"));
 }

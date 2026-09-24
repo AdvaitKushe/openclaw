@@ -1341,6 +1341,35 @@ describe("previous release update compatibility", () => {
     },
   );
 
+  it.each(["driver root", "other binding", "other owner"])(
+    "accepts the package-root Node runtime recovery contract only from its driver (%s)",
+    (variant) => {
+      const binding = variant === "other binding" ? "root" : "driverRoot";
+      const expression = `await (async () => {
+        const { findUsableNodeRuntime } = await import(pathToFileURL(path.join(${binding}, "node-runtime-recovery.mjs")).href);
+        return (await import("./surface-abcdefgh.js")).x;
+      })()`;
+      const record = () =>
+        recordImportedFixture(
+          expression,
+          {
+            "surface-abcdefgh.js": "//#region src/infra/value.ts\nexport const x = 1;\n",
+          },
+          undefined,
+          variant === "other owner"
+            ? "src/cli/update-cli/update-command-runtime.ts"
+            : "src/cli/update-cli/update-command-node-runtime-resolution.ts",
+        );
+      if (variant !== "driver root") {
+        expect(record).toThrow("Nonliteral post-swap import");
+        return;
+      }
+      expect(record().inventory.releases[0]?.chunks.map((chunk) => chunk.path)).toEqual([
+        "surface-abcdefgh.js",
+      ]);
+    },
+  );
+
   it.each(
     previousReleaseInventory.releases
       .filter(({ version }) => ["2026.9.1", "2026.9.2", "2026.9.3", "2026.9.4"].includes(version))
@@ -1868,14 +1897,19 @@ describe("previous release update compatibility", () => {
     expect(loaded.runner).toBe(current.x);
   });
 
-  it.each(["present", "missing"])(
-    "excludes the isolated config-doctor graph when the runtime binding is %s",
-    async (runtime) => {
+  it.each([
+    ["config-doctor", "present"],
+    ["config-doctor", "missing"],
+    ["native-hook-relay", "present"],
+    ["native-hook-relay", "missing"],
+  ])(
+    "excludes the isolated %s graph when the runtime binding is %s",
+    async (directory, runtime) => {
       const inventory = recordFixture();
       const root = createTempDir("update-compat-isolated-graph-");
       candidate(root);
       const current = path.join(root, "dist/current.mjs");
-      write(root, "dist/config-doctor/inspect.mjs", fsSync.readFileSync(current, "utf8"));
+      write(root, `dist/${directory}/inspect.mjs`, fsSync.readFileSync(current, "utf8"));
       const options = { distDir: path.join(root, "dist"), sourceDir: root, inventory };
       if (runtime === "missing") {
         fsSync.unlinkSync(current);
