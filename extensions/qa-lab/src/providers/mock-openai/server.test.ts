@@ -1774,6 +1774,7 @@ describe("qa mock openai server", () => {
     expect(outputToolArgsFromItem(groupToolCall)).toEqual({
       action: "react",
       emoji: "👍",
+      final: true,
     });
 
     const toolCall = outputToolCall(declaredPayload, "message");
@@ -1784,6 +1785,7 @@ describe("qa mock openai server", () => {
     expect(outputToolArgsFromItem(toolCall)).toEqual({
       action: "react",
       emoji: "👍",
+      final: true,
     });
   });
 
