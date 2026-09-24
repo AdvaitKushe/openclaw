@@ -8,6 +8,7 @@ import {
 import { LegacyContextEngine } from "../../context-engine/legacy.js";
 import { registerContextEngineInRegistry } from "../../context-engine/registry.js";
 import type { ContextEngine } from "../../context-engine/types.js";
+import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import { PluginRegistryInspectionResources } from "../../plugins/registry-inspection-resources.js";
 import { retireInspectionInstances } from "../../plugins/registry-inspection.test-support.js";
@@ -272,20 +273,21 @@ describe("durable accepted-turn maintenance handoff", () => {
     },
   );
 
-  it.each([
+  it.for([
     { outcome: "committed", maintenanceFails: false },
     { outcome: "duplicate", maintenanceFails: false },
     { outcome: "committed", maintenanceFails: true },
     { outcome: "duplicate", maintenanceFails: true },
   ] as const)(
     "returns before maintenance settles and retains resources ($outcome, failure=$maintenanceFails)",
-    async ({ outcome, maintenanceFails }) => {
+    async ({ outcome, maintenanceFails }, { signal }) => {
       await withAcceptedTurn(outcome, maintenanceFails, async (fixture) => {
         await finalizeAcceptedContextEngineTurn(fixture);
         expect(fixture.commitTurn).toHaveBeenCalledOnce();
         expect(fixture.pendingTurn()).toBeUndefined();
         // No second user turn or explicit scheduler invocation starts the work.
-        await vi.waitFor(() => expect(fixture.maintain).toHaveBeenCalledOnce());
+        await racePromiseWithAbortSignal(fixture.maintenanceStarted.promise, signal);
+        expect(fixture.maintain).toHaveBeenCalledOnce();
         expect(fixture.maintain.mock.calls[0]?.[0]).toMatchObject({
           sessionId: fixture.facts.sessionIdUsed,
           sessionKey: fixture.facts.sessionKey,

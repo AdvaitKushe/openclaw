@@ -712,13 +712,13 @@ describe("runContextEngineMaintenance", () => {
         const keepProcessAlive = () => {};
         process.on("SIGTERM", keepProcessAlive);
 
-        let releaseFirstMaintenance: (() => void) | undefined;
+        const releaseFirstMaintenance = createDeferred();
         let observedSignal: AbortSignal | undefined;
         const firstMaintain = vi.fn(async (rawParams?: unknown) => {
           const signal = (rawParams as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
           observedSignal = signal;
           await new Promise<void>((resolve, reject) => {
-            releaseFirstMaintenance = resolve;
+            void releaseFirstMaintenance.promise.then(resolve);
             if (!signal) {
               return;
             }
@@ -845,7 +845,7 @@ describe("runContextEngineMaintenance", () => {
             queuedCount: 0,
           });
         } finally {
-          releaseFirstMaintenance?.();
+          releaseFirstMaintenance.resolve();
           await Promise.allSettled(deferred ? [deferred] : []);
           await Promise.allSettled([
             firstResolution.fallback.engine.dispose?.(),
