@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -47,6 +48,7 @@ import { resolveGatewayAssistantAvatar } from "./assistant-avatar.js";
 import { tryResolveSessionCompatibilityOwnerAgentId } from "./session-request-agent.js";
 import { resolveGatewayModelThinkingProfile } from "./session-utils-model.js";
 import {
+  withGatewaySessionStoreTarget,
   type GatewaySessionStoreDiscoveryCache,
   resolveGatewaySessionStoreTarget,
   resolveGatewaySessionStoreTargetWithStore,
@@ -205,6 +207,55 @@ export function loadGatewaySessionEntryReadOnly(
   cfg?: OpenClawConfig,
 ) {
   return loadSessionEntryWithMode(sessionKey, opts, true, cfg);
+}
+
+/** Consume exact row facts synchronously while their physical worker owners remain retained. */
+export async function withGatewaySessionEntry<T>(
+  sessionKey: string,
+  opts:
+    | (Pick<SessionEntryListScope, "agentId" | "projection" | "env"> & {
+        includeMembership?: boolean;
+      })
+    | undefined,
+  consume: (
+    session: ReturnType<typeof loadGatewaySessionEntry>,
+    membership: ReadonlyMap<
+      string,
+      readonly import("../config/sessions/session-sharing-store.kernel.js").SessionMember[]
+    >,
+    assertSourceCurrent: () => void,
+  ) => T,
+  cfg: OpenClawConfig = getRuntimeConfig(),
+  assertConfigCurrent: () => void = () => {
+    if (!isDeepStrictEqual(cfg, getRuntimeConfig())) {
+      throw new Error("Session routing changed during consumption");
+    }
+  },
+): Promise<T> {
+  return await withGatewaySessionStoreTarget(
+    { cfg, key: sessionKey, ...opts },
+    (target, membership, assertSourceCurrent) => {
+      for (const key of target.storeKeys) {
+        if (isInternalSessionEffectsKey(key)) {
+          delete target.store[key];
+        }
+      }
+      const canonicalMatch = findCanonicalStoreMatch(target.store, target.storeKeys);
+      return consume(
+        {
+          cfg,
+          ...target,
+          entry: canonicalMatch?.entry,
+          legacyKey: canonicalMatch?.key !== target.canonicalKey ? canonicalMatch?.key : undefined,
+        },
+        membership,
+        () => {
+          assertSourceCurrent();
+          assertConfigCurrent();
+        },
+      );
+    },
+  );
 }
 
 export function resolveCanonicalSessionEntryFromStoreKeys(

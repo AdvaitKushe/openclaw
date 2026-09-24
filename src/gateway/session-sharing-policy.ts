@@ -26,6 +26,7 @@ import {
 import type { GatewayClient } from "./server-methods/types.js";
 import { isSessionCreatorProfile, prepareSessionCreatorProfile } from "./session-creator.js";
 import {
+  withGatewaySessionStoreTarget,
   prepareGatewaySessionStoreTargetsReadOnly,
   resolveGatewaySessionStoreTargetsReadOnly,
   resolveGatewaySessionStoreTargetWithStore,
@@ -41,6 +42,7 @@ export type SessionSharingTarget = {
   storeKey: string;
   storeKeys: string[];
   storePath: string;
+  readSource?: import("../config/sessions/session-accessor.types.js").SessionEntryReadSource;
 };
 
 export function resolveSessionVisibility(
@@ -114,6 +116,34 @@ export function resolveSessionSharingTarget(params: {
   return toSessionSharingTarget(target);
 }
 
+/** Fresh entry and membership consumed under the existing physical reader owner. */
+export async function withSessionSharingTarget<T>(
+  params: { cfg: OpenClawConfig; sessionKey: string; agentId?: string },
+  consume: (facts: {
+    target: SessionSharingTarget | null;
+    members: readonly import("../config/sessions/session-sharing-store.kernel.js").SessionMember[];
+    assertCurrent: () => void;
+  }) => T,
+): Promise<T> {
+  return withGatewaySessionStoreTarget(
+    {
+      cfg: params.cfg,
+      key: params.sessionKey,
+      agentId: params.agentId,
+      projection: "list",
+      includeMembership: true,
+    },
+    (selected, membership, assertCurrent) => {
+      const target = toSessionSharingTarget(selected);
+      return consume({
+        target,
+        members: target ? (membership.get(target.storeKey) ?? []) : [],
+        assertCurrent,
+      });
+    },
+  );
+}
+
 /** Fresh metadata for one synchronous batch; no authorization decisions are retained. */
 export function resolveSessionSharingTargets(params: {
   cfg: OpenClawConfig;
@@ -137,6 +167,7 @@ function toSessionSharingTarget(
         storeKey: match.key,
         storeKeys: target.storeKeys,
         storePath: target.storePath,
+        readSource: target.readSource,
       }
     : null;
 }
